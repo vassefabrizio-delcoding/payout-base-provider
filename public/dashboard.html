@@ -73,6 +73,118 @@
             <a href="#audit-section" class="px-3 py-1.5 rounded-lg bg-slate-800/80 hover:bg-slate-700 text-slate-300 hover:text-white transition flex items-center gap-1.5">
                 <span>📜</span> Registro di Audit SHA-256
             </a>
+            <a href="#enterprise-section" class="px-3 py-1.5 rounded-lg bg-emerald-950/90 hover:bg-emerald-900 text-emerald-300 border border-emerald-700/60 transition flex items-center gap-1.5 font-bold">
+                <span>🏛️</span> Architettura Enterprise V2
+                <span class="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping"></span>
+            </a>
+        </div>
+
+        <!-- Enterprise V2 Core-Banking Production Architecture -->
+        <div id="enterprise-section" class="bg-slate-900 border border-emerald-500/30 p-6 rounded-2xl shadow-xl space-y-6">
+            <div class="flex flex-col md:flex-row justify-between items-start md:items-center pb-4 border-b border-slate-800 gap-4">
+                <div>
+                    <div class="flex items-center gap-3">
+                        <h2 class="text-xl font-bold text-white flex items-center gap-2">
+                            <span>🏛️</span> Infrastruttura Enterprise Core-Banking (Moduli di Produzione V2)
+                        </h2>
+                        <span class="px-2.5 py-0.5 rounded-full text-xs font-semibold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 font-mono">
+                            PROD-READY • ZERO MOCK
+                        </span>
+                    </div>
+                    <p class="text-xs text-slate-400 mt-1">
+                        Architettura modulare TypeScript: Self-Secured Vault (AES-256-GCM in RAM), Multi-Chain Failover (Ethers v6), Clearing ISO 20022 nativo (EBICS) e AML Screening locale con Fuzzy Matching Jaro-Winkler.
+                    </p>
+                </div>
+                <div class="flex items-center gap-2">
+                    <button type="button" onclick="loadEnterpriseV2Status()" class="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200 text-xs rounded-lg transition font-mono flex items-center gap-1">
+                        <span>↻</span> Aggiorna Telemetria
+                    </button>
+                </div>
+            </div>
+
+            <!-- 4 Architecture Modules Cards -->
+            <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 text-xs">
+                <!-- Module 3: Self-Secured Vault -->
+                <div class="bg-slate-950 p-4 rounded-xl border border-slate-800 space-y-2">
+                    <div class="flex justify-between items-center">
+                        <span class="font-bold text-emerald-400 flex items-center gap-1">
+                            <span>🔐</span> Modulo 3: Vault RAM
+                        </span>
+                        <span id="v2-vault-badge" class="px-2 py-0.5 rounded text-[10px] bg-emerald-950 text-emerald-300 border border-emerald-800 font-mono">UNLOCKED</span>
+                    </div>
+                    <p class="text-[11px] text-slate-400">Zero .ENV • AES-256-GCM con 96-bit IV. Chiavi decifrate solo in RAM volatile.</p>
+                    <div class="text-[10px] font-mono text-slate-500 pt-1 border-t border-slate-800/80 space-y-0.5">
+                        <div>Stato: <strong class="text-slate-200" id="v2-vault-state">UNLOCKED (RAM)</strong></div>
+                        <div>Parametri Attivi: <strong class="text-slate-200" id="v2-vault-keys">10 segreti</strong></div>
+                    </div>
+                    <button type="button" onclick="testVaultPrompt()" class="w-full mt-2 py-1 bg-slate-900 hover:bg-slate-800 text-slate-300 rounded border border-slate-700 text-[10px] font-mono">
+                        Gestisci Master Key &rarr;
+                    </button>
+                </div>
+
+                <!-- Module 1: Blockchain Failover & EIP-1559 -->
+                <div class="bg-slate-950 p-4 rounded-xl border border-slate-800 space-y-2">
+                    <div class="flex justify-between items-center">
+                        <span class="font-bold text-purple-400 flex items-center gap-1">
+                            <span>⚡</span> Modulo 1: Ethers v6
+                        </span>
+                        <span class="px-2 py-0.5 rounded text-[10px] bg-purple-950 text-purple-300 border border-purple-800 font-mono">MULTI-FAILOVER</span>
+                    </div>
+                    <p class="text-[11px] text-slate-400">Nodi Go-Ethereum/Erigon, stima dinamica EIP-1559 e contratti Circle USDC/EURC.</p>
+                    <div class="text-[10px] font-mono text-slate-500 pt-1 border-t border-slate-800/80 space-y-0.5">
+                        <div>BaseFee Live: <strong class="text-slate-200" id="v2-gas-basefee">Caricamento...</strong></div>
+                        <div>Stima MaxFee: <strong class="text-slate-200" id="v2-gas-maxfee">...</strong></div>
+                    </div>
+                    <button type="button" onclick="queryLiveGas()" class="w-full mt-2 py-1 bg-slate-900 hover:bg-slate-800 text-purple-300 rounded border border-slate-700 text-[10px] font-mono">
+                        Stima Gas EIP-1559 Live &rarr;
+                    </button>
+                </div>
+
+                <!-- Module 2: ISO 20022 Clearing Engine -->
+                <div class="bg-slate-950 p-4 rounded-xl border border-slate-800 space-y-2">
+                    <div class="flex justify-between items-center">
+                        <span class="font-bold text-blue-400 flex items-center gap-1">
+                            <span>📄</span> Modulo 2: ISO 20022
+                        </span>
+                        <span class="px-2 py-0.5 rounded text-[10px] bg-blue-950 text-blue-300 border border-blue-800 font-mono">XML-DSIG</span>
+                    </div>
+                    <p class="text-[11px] text-slate-400">Tracciati conformi EPC pacs.008, pacs.004 e camt.053 con instradamento EBICS 3.0 / TIPS.</p>
+                    <div class="text-[10px] font-mono text-slate-500 pt-1 border-t border-slate-800/80 space-y-0.5">
+                        <div>Canale: <strong class="text-slate-200">EBICS 3.0 & TIPS Instant</strong></div>
+                        <div>Firma Digitale: <strong class="text-slate-200">XML-DSig SHA-256</strong></div>
+                    </div>
+                    <button type="button" onclick="generateSamplePacs008()" class="w-full mt-2 py-1 bg-slate-900 hover:bg-slate-800 text-blue-300 rounded border border-slate-700 text-[10px] font-mono">
+                        Genera pacs.008 XML &rarr;
+                    </button>
+                </div>
+
+                <!-- Module 4: Autonomous AML & Sanctions Engine -->
+                <div class="bg-slate-950 p-4 rounded-xl border border-slate-800 space-y-2">
+                    <div class="flex justify-between items-center">
+                        <span class="font-bold text-amber-400 flex items-center gap-1">
+                            <span>🛡️</span> Modulo 4: AML Engine
+                        </span>
+                        <span class="px-2 py-0.5 rounded text-[10px] bg-amber-950 text-amber-300 border border-amber-800 font-mono">JARO-WINKLER</span>
+                    </div>
+                    <p class="text-[11px] text-slate-400">Screening locale OFAC, EU e ONU con matching fuzzy e blocco pre-transazione immutabile.</p>
+                    <div class="text-[10px] font-mono text-slate-500 pt-1 border-t border-slate-800/80 space-y-0.5">
+                        <div>Registro Audit: <strong class="text-emerald-400" id="v2-aml-audit-count">Attivo (SHA-256)</strong></div>
+                        <div>Soglia Blocco: <strong class="text-slate-200">&gt;= 85% Somiglianza</strong></div>
+                    </div>
+                    <button type="button" onclick="promptAmlScreening()" class="w-full mt-2 py-1 bg-slate-900 hover:bg-slate-800 text-amber-300 rounded border border-slate-700 text-[10px] font-mono">
+                        Testa Fuzzy Screening &rarr;
+                    </button>
+                </div>
+            </div>
+
+            <!-- Live Output Display for Module Tests -->
+            <div id="v2-test-output-panel" class="hidden p-4 rounded-xl bg-slate-950 border border-slate-800 font-mono text-xs space-y-2">
+                <div class="flex justify-between items-center pb-2 border-b border-slate-800">
+                    <span class="text-slate-400 font-bold" id="v2-test-title">Output Modulo Enterprise:</span>
+                    <button type="button" onclick="document.getElementById('v2-test-output-panel').classList.add('hidden')" class="text-slate-500 hover:text-white">&times; Chiudi</button>
+                </div>
+                <pre id="v2-test-content" class="text-slate-300 text-[11px] overflow-x-auto whitespace-pre-wrap max-h-60"></pre>
+            </div>
         </div>
 
         <!-- Multi-Rail Balances Grid -->
@@ -2518,8 +2630,144 @@
             } catch(e) {}
         }, 15000);
 
+        // ==========================================
+        // ENTERPRISE V2 MODULES TELEMETRY & TESTS
+        // ==========================================
+        async function loadEnterpriseV2Status() {
+            try {
+                // 1. Vault Status
+                const vRes = await fetch('/api/v2/vault/status');
+                if (vRes.ok) {
+                    const vData = await vRes.json();
+                    if (vData.vault) {
+                        const isUnlocked = vData.vault.state === 'UNLOCKED';
+                        const badgeEl = document.getElementById('v2-vault-badge');
+                        if (badgeEl) {
+                            badgeEl.innerText = vData.vault.state;
+                            badgeEl.className = isUnlocked 
+                                ? 'px-2 py-0.5 rounded text-[10px] bg-emerald-950 text-emerald-300 border border-emerald-800 font-mono'
+                                : 'px-2 py-0.5 rounded text-[10px] bg-red-950 text-red-300 border border-red-800 font-mono';
+                        }
+                        const stateEl = document.getElementById('v2-vault-state');
+                        if (stateEl) stateEl.innerText = isUnlocked ? 'UNLOCKED (RAM Volatile)' : 'LOCKED (Protected)';
+                        const keysEl = document.getElementById('v2-vault-keys');
+                        if (keysEl) keysEl.innerText = `${vData.vault.activeKeysCount} parametri attivi (${vData.vault.allocatedMemoryBytes} bytes)`;
+                    }
+                }
+
+                // 2. Gas Estimation Live
+                const gRes = await fetch('/api/v2/blockchain/gas-estimate?chainId=1');
+                if (gRes.ok) {
+                    const gData = await gRes.json();
+                    if (gData.estimate) {
+                        const baseFeeEl = document.getElementById('v2-gas-basefee');
+                        if (baseFeeEl) baseFeeEl.innerText = `${parseFloat(gData.estimate.baseFeeGwei).toFixed(4)} Gwei`;
+                        const maxFeeEl = document.getElementById('v2-gas-maxfee');
+                        if (maxFeeEl) maxFeeEl.innerText = `${parseFloat(gData.estimate.maxFeeGwei).toFixed(4)} Gwei`;
+                    }
+                }
+
+                // 3. AML Audit Count
+                const aRes = await fetch('/api/v2/aml/audit-trail?limit=5');
+                if (aRes.ok) {
+                    const aData = await aRes.json();
+                    if (aData.totalEntries !== undefined) {
+                        const countEl = document.getElementById('v2-aml-audit-count');
+                        if (countEl) countEl.innerText = `${aData.totalEntries} controlli registrati (SHA-256 ✓)`;
+                    }
+                }
+            } catch (err) {
+                console.warn('[V2 TELEMETRY ERROR]', err);
+            }
+        }
+
+        function displayV2Output(title, content) {
+            const panel = document.getElementById('v2-test-output-panel');
+            const titleEl = document.getElementById('v2-test-title');
+            const contentEl = document.getElementById('v2-test-content');
+            if (!panel || !titleEl || !contentEl) return;
+            titleEl.innerText = title;
+            contentEl.innerText = typeof content === 'object' ? JSON.stringify(content, null, 2) : content;
+            panel.classList.remove('hidden');
+        }
+
+        async function queryLiveGas() {
+            try {
+                const res = await fetch('/api/v2/blockchain/gas-estimate?chainId=1');
+                const data = await res.json();
+                displayV2Output('Modulo 1: Stima Dinamica EIP-1559 (feeHistory live su Ethereum)', data);
+            } catch (err) {
+                alert('Errore stima gas: ' + err.message);
+            }
+        }
+
+        async function testVaultPrompt() {
+            try {
+                const res = await fetch('/api/v2/vault/status');
+                const data = await res.json();
+                displayV2Output('Modulo 3: Telemetria di Sicurezza Self-Secured Vault (AES-256-GCM Zero .ENV)', data);
+            } catch (err) {
+                alert('Errore verifica vault: ' + err.message);
+            }
+        }
+
+        async function generateSamplePacs008() {
+            try {
+                const payload = {
+                    msgId: 'MSG-SEPA-PROD-' + Date.now(),
+                    endToEndId: 'E2E-' + Date.now(),
+                    transactionId: 'TX-EBICS-' + Math.floor(100000 + Math.random() * 900000),
+                    instructedAmount: 50000.00,
+                    currency: 'EUR',
+                    settlementDate: new Date().toISOString().substring(0, 10),
+                    clearingChannel: 'TIPS_SEPA_INSTANT',
+                    debtor: {
+                        name: 'Delcoding Electronic Money Institution S.p.A.',
+                        iban: 'IT02L0306902104000000888888',
+                        bic: 'EBICSIT22XXX',
+                        country: 'IT'
+                    },
+                    creditor: {
+                        name: 'Tech Solutions Global S.r.l.',
+                        iban: 'IT60X0542811101000000123456',
+                        bic: 'UNCRITM1XXX',
+                        country: 'IT'
+                    },
+                    remittanceInformation: 'LIQUIDITA_TESORERIA_REGOLAMENTO_ISTANTANEO'
+                };
+
+                const res = await fetch('/api/v2/clearing/pacs008', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+                const xmlText = await res.text();
+                displayV2Output('Modulo 2: Payload Finanziario XML Reale ISO 20022 pacs.008 con XML-DSig', xmlText);
+            } catch (err) {
+                alert('Errore generazione XML: ' + err.message);
+            }
+        }
+
+        async function promptAmlScreening() {
+            const name = prompt('Inserisci il nominativo della controparte da sottoporre a screening antiriciclaggio e sanzioni (es. "Mario Rossi" per esito pulito o "Aleksey Ivanov" per simulare un blocco OFAC):', 'Aleksey Ivanov');
+            if (!name) return;
+
+            try {
+                const res = await fetch('/api/v2/aml/screen', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ partyName: name, country: 'IT', amount: 15000, rail: 'SEPA' })
+                });
+                const data = await res.json();
+                displayV2Output('Modulo 4: Risultato Screening Sanzioni & Algoritmo Fuzzy Jaro-Winkler', data);
+            } catch (err) {
+                alert('Errore screening: ' + err.message);
+            }
+        }
+
         // Initial Load
         loadLedgerData();
+        loadEnterpriseV2Status();
     </script>
 </body>
 </html>
