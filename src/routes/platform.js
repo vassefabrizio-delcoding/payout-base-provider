@@ -1,0 +1,511 @@
+const express = require('express');
+const router = express.Router();
+const coreLedger = require('../services/CoreLedger');
+const compliance = require('../services/ComplianceAML');
+const paymentRails = require('../services/PaymentRails');
+const blockchain = require('../services/BlockchainService');
+const oracle = require('../services/OracleService');
+const yieldStrategy = require('../services/YieldStrategyService');
+const AppConfig = require('../config/AppConfig');
+
+/**
+ * GET /balance - Backward-compatible endpoint
+ */
+router.get('/balance', (req, res) => {
+    const overview = coreLedger.getLedgerOverview();
+    res.json({
+        balance: overview.fiat.eur.balance,
+        usdBalance: overview.fiat.usd.balance,
+        institution: overview.institution.name,
+        license: overview.institution.license,
+        safeguardingRatio: overview.institution.safeguardingRatio
+    });
+});
+
+/**
+ * GET /overview - Full institutional overview of all fiat & on-chain balances with oracle valuation and KYC status
+ */
+router.get('/overview', (req, res) => {
+    try {
+        const overview = coreLedger.getLedgerOverview();
+        const complianceConfig = compliance.getComplianceConfig();
+        const walletInfo = blockchain.getWalletInfo();
+        const portfolioValuation = oracle.calculatePortfolioValuation(overview);
+        const kycStatus = compliance.getKycProfile();
+
+        res.json({
+            ...overview,
+            compliance: complianceConfig,
+            walletInfo,
+            portfolioValuation,
+            kycStatus
+        });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+/**
+ * GET /kyc-status - Retrieve KYC user verification levels and document status
+ */
+router.get('/kyc-status', (req, res) => {
+    try {
+        const kycProfile = compliance.getKycProfile();
+        res.json(kycProfile);
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+/**
+ * POST /kyc-document - Submit / upload required documentation for EMI regulatory compliance
+ */
+router.post('/kyc-document', (req, res) => {
+    try {
+        const { docId, filename } = req.body;
+        if (!docId) {
+            return res.status(400).json({ error: 'Identificativo documento obbligatorio.' });
+        }
+        const updatedKyc = compliance.uploadKycDocument({ docId, filename });
+        res.json({
+            success: true,
+            message: 'Documento caricato con successo. Preso in carico dall\'ufficio Compliance per la revisione.',
+            kycStatus: updatedKyc
+        });
+    } catch (err) {
+        res.status(400).json({ error: err.message });
+    }
+});
+
+/**
+ * GET /oracle-rates - Retrieve real-time aggregated oracle price feeds and portfolio valuation
+ */
+router.get('/oracle-rates', (req, res) => {
+    try {
+        const overview = coreLedger.getLedgerOverview();
+        const valuationData = oracle.calculatePortfolioValuation(overview);
+        res.json(valuationData);
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+/**
+ * POST /convert - Real-time asset conversion using aggregated oracle feeds
+ */
+router.post('/convert', (req, res) => {
+    try {
+        const { amount, fromAsset = 'ETH', toAsset = 'EUR' } = req.body;
+        const conversion = oracle.convertAsset({
+            amount: parseFloat(amount) || 0,
+            fromAsset,
+            toAsset
+        });
+        res.json(conversion);
+    } catch (err) {
+        res.status(400).json({ error: err.message });
+    }
+});
+
+/**
+ * GET /wallet - Retrieve operational institutional wallet details
+ */
+router.get('/wallet', (req, res) => {
+    res.json(blockchain.getWalletInfo());
+});
+
+/**
+ * GET /message/:txId - Retrieve authentic ISO 20022 XML or SWIFT FIN MT103 clearing message
+ */
+router.get('/message/:txId', (req, res) => {
+    const { txId } = req.params;
+    const payload = coreLedger.getClearingPayload(txId);
+    if (!payload) {
+        return res.status(404).json({ error: `Nessun messaggio di clearing archiviato per la transazione ${txId}` });
+    }
+    res.json({
+        txId,
+        payload: payload,
+        format: payload.startsWith('<?xml') ? 'ISO_20022_XML' : (payload.startsWith('{1:F01') ? 'SWIFT_FIN_MT103' : 'RAW_HEX_SIGNED_TX')
+    });
+});
+
+/**
+ * POST /payout - Dual-rail payout execution (SEPA, SWIFT, On-Chain)
+ */
+router.post('/payout', async (req, res) => {
+    try {
+        const {
+            rail = 'SEPA',
+            amount,
+            // Fiat SEPA fields
+            iban,
+            beneficiaryName,
+            remittanceInfo,
+            // Fiat SWIFT fields
+            swiftBic,
+            accountNumber,
+            routingNumber,
+            // Web3 On-Chain fields
+            token = 'EURC',
+            recipientAddress,
+            network,
+            customSender
+        } = req.body;
+
+        const numAmount = parseFloat(amount);
+        if (!amount || isNaN(numAmount) || numAmount <= 0) {
+            return res.status(400).json({ error: "Importo non valido o mancante. Inserire una cifra maggiore di zero." });
+        }
+
+        // Determine currency and recipient based on rail
+        let currency = 'EUR';
+        let recipientIdentifier = iban;
+        let counterparty = beneficiaryName || 'Beneficiario Regolamentato';
+
+        if (rail === 'SWIFT') {
+            currency = 'USD';
+            recipientIdentifier = `${accountNumber} @ ${swiftBic}`;
+            if (!accountNumber || !swiftBic) {
+                return res.status(400).json({ error: "Per il circuito SWIFT sono obbligatori Account Number e codice SWIFT/BIC." });
+            }
+        } else if (rail === 'ON_CHAIN') {
+            currency = token.toUpperCase();
+            recipientIdentifier = recipientAddress;
+            counterparty = `EVM Wallet (${token})`;
+            if (!recipientAddress) {
+                return res.status(400).json({ error: "Indirizzo wallet Ethereum/EVM obbligatorio per transazioni on-chain." });
+            }
+        } else {
+            // Default SEPA
+            if (!iban) {
+                return res.status(400).json({ error: "IBAN beneficiario obbligatorio per il circuito SEPA." });
+            }
+        }
+
+        // 1. Mandatory AML / KYC / Sanctions Screening
+        const screeningResult = compliance.screenCompliance({
+            amount: numAmount,
+            recipient: recipientIdentifier,
+            counterpartyName: counterparty,
+            rail: rail
+        });
+
+        if (!screeningResult.approved) {
+            console.warn(`[AML/CFT ALERT] Payout Blocked. Reason: ${screeningResult.reason}`);
+            return res.status(403).json({
+                error: screeningResult.reason,
+                riskScore: screeningResult.riskScore,
+                blockedByCompliance: true
+            });
+        }
+
+        // 2. Dispatch across selected rail
+        let railReceipt = null;
+        let onChainDetails = null;
+        let rawPayload = null;
+
+        if (rail === 'SEPA') {
+            railReceipt = await paymentRails.dispatchSEPA({
+                iban,
+                amount: numAmount,
+                beneficiaryName,
+                remittanceInfo
+            });
+            rawPayload = railReceipt.isoXmlMessage;
+        } else if (rail === 'SWIFT') {
+            railReceipt = await paymentRails.dispatchSWIFT({
+                swiftBic,
+                accountNumber,
+                routingNumber,
+                amount: numAmount,
+                beneficiaryName,
+                remittanceInfo
+            });
+            rawPayload = railReceipt.swiftFinMessage;
+        } else if (rail === 'ON_CHAIN') {
+            railReceipt = await blockchain.dispatchOnChainTransaction({
+                token: currency,
+                recipientAddress,
+                amount: numAmount,
+                network,
+                customSender
+            });
+            onChainDetails = {
+                txHash: railReceipt.txHash,
+                network: railReceipt.network,
+                blockNumber: railReceipt.blockNumber,
+                rawSignedTx: railReceipt.rawSignedTx
+            };
+            rawPayload = railReceipt.rawSignedTx;
+        }
+
+        // 3. Double-entry posting in Core Ledger & cryptographic chaining
+        const ledgerResult = coreLedger.recordPayout({
+            rail: railReceipt.rail,
+            currency: currency,
+            amount: numAmount,
+            recipient: recipientIdentifier,
+            counterparty: counterparty,
+            reference: remittanceInfo || (rail === 'ON_CHAIN' ? `ONCHAIN_${currency}_TRANSFER` : 'EMI_DIRECT_CLEARING'),
+            amlRiskScore: screeningResult.riskScore,
+            onChainTx: onChainDetails,
+            rawPayload: rawPayload
+        });
+
+        console.log(`[CORE LEDGER] Payout Settled. TxId: ${ledgerResult.txId}, Rail: ${railReceipt.rail}, Amount: ${numAmount} ${currency}`);
+
+        res.json({
+            success: true,
+            message: `Payout di ${numAmount.toLocaleString('it-IT')} ${currency} eseguito con successo sul circuito ${railReceipt.rail}.`,
+            txId: ledgerResult.txId,
+            railDetails: railReceipt,
+            ledgerEntry: ledgerResult.entry,
+            hasClearingMessage: Boolean(rawPayload),
+            remainingBalance: currency === 'EUR' ? ledgerResult.balances.fiat.eur.balance : 
+                             (currency === 'USD' ? ledgerResult.balances.fiat.usd.balance : 
+                             (currency === 'EURC' ? ledgerResult.balances.onChain.eurc.balance : ledgerResult.balances.onChain.usdc.balance)),
+            currency: currency,
+            balances: ledgerResult.balances
+        });
+
+    } catch (err) {
+        console.error('[PAYOUT ERROR]', err.message);
+        res.status(400).json({ error: err.message });
+    }
+});
+
+/**
+ * GET /audit-log - Retrieve immutable chained audit trail
+ */
+router.get('/audit-log', (req, res) => {
+    const limit = parseInt(req.query.limit, 10) || 100;
+    const logs = coreLedger.getAuditLog(limit);
+    res.json({
+        total: logs.length,
+        logs: logs
+    });
+});
+
+/**
+ * GET /verify-ledger - Cryptographic verification of SHA-256 chain
+ */
+router.get('/verify-ledger', (req, res) => {
+    const proof = coreLedger.verifyLedgerIntegrity();
+    res.json(proof);
+});
+
+/**
+ * POST /aml-screen - Pre-screening check API for frontend input validation
+ */
+router.post('/aml-screen', (req, res) => {
+    const { amount, recipient, counterpartyName, rail } = req.body;
+    const result = compliance.screenCompliance({
+        amount: parseFloat(amount) || 0,
+        recipient,
+        counterpartyName,
+        rail
+    });
+    res.json(result);
+});
+
+/**
+ * GET /yield-benchmarks - Retrieve benchmark yields and scenario rates for safeguarding vs on-chain staking
+ */
+router.get('/yield-benchmarks', (req, res) => {
+    try {
+        const benchmarks = yieldStrategy.getBenchmarks();
+        res.json({
+            success: true,
+            data: benchmarks
+        });
+    } catch (err) {
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
+
+/**
+ * GET /yield-simulate & POST /yield-simulate - Calculate ROI and trajectory projection points
+ */
+const handleYieldSimulate = (req, res) => {
+    try {
+        const params = req.method === 'POST' ? req.body : req.query;
+        const result = yieldStrategy.simulateYield({
+            principal: params.principal,
+            safeguardingShare: params.safeguardingShare,
+            horizonMonths: params.horizonMonths,
+            scenario: params.scenario,
+            compounding: params.compounding
+        });
+        res.json({
+            success: true,
+            data: result
+        });
+    } catch (err) {
+        res.status(400).json({ success: false, error: err.message });
+    }
+};
+
+router.get('/yield-simulate', handleYieldSimulate);
+router.post('/yield-simulate', handleYieldSimulate);
+
+/**
+ * GET /network-status - Retrieve real-time multi-chain RPC connectivity and block heights
+ */
+router.get('/network-status', async (req, res) => {
+    try {
+        const health = await blockchain.getNetworkHealth();
+        res.json({
+            success: true,
+            timestamp: new Date().toISOString(),
+            networks: health
+        });
+    } catch (err) {
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
+
+/**
+ * GET /minting-assets - Retrieve supported fiat & cross-chain assets, networks, and minter authority
+ */
+router.get('/minting-assets', (req, res) => {
+    try {
+        const networks = blockchain.getSupportedNetworks();
+        const cryptoAssets = blockchain.getSupportedAssets();
+        const fiatAssets = [
+            { symbol: 'EUR', name: 'Euro Moneta Elettronica (EMD2)', type: 'FIAT', rail: 'SEPA TIPS / EBICS', icon: '€' },
+            { symbol: 'USD', name: 'US Dollar E-Money Account', type: 'FIAT', rail: 'SWIFT GPI / Fedwire', icon: '$' }
+        ];
+        const overview = coreLedger.getLedgerOverview();
+
+        res.json({
+            success: true,
+            minterAddress: AppConfig.web3.walletAddress,
+            fiatAssets,
+            cryptoAssets,
+            networks,
+            currentBalances: overview
+        });
+    } catch (err) {
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
+
+/**
+ * POST /fund-or-mint - Autonomous Direct Crediting & Minting Engine
+ * Executes immediate real credit to Core Ledger (Fiat EUR/USD) or real cryptographic Smart Contract mint/transfer on-chain
+ */
+router.post('/fund-or-mint', async (req, res) => {
+    try {
+        const {
+            asset = 'EUR',
+            chainId = 1,
+            recipient,
+            amount,
+            mode = 'MINT', // 'MINT' or 'TREASURY_TRANSFER'
+            depositorName,
+            reference,
+            sourceIban,
+            note
+        } = req.body;
+
+        const numAmount = parseFloat(amount);
+        if (!amount || isNaN(numAmount) || numAmount <= 0) {
+            return res.status(400).json({
+                success: false,
+                error: 'Importo non valido o mancante. Inserire una cifra maggiore di zero.'
+            });
+        }
+
+        const assetUpper = asset.toUpperCase();
+
+        // Path A: Real Fiat E-Money Direct Credit (EUR / USD)
+        if (assetUpper === 'EUR' || assetUpper === 'USD') {
+            const result = coreLedger.creditDirectFiat({
+                currency: assetUpper,
+                amount: numAmount,
+                depositorName: depositorName || 'Istituzione Finanziaria / Ricarica Diretta',
+                reference: reference || `EMD2_RELOAD_${Date.now()}`,
+                sourceIban: sourceIban || null,
+                operator: 'EMI_AUTONOMOUS_TREASURY'
+            });
+
+            return res.json({
+                success: true,
+                rail: 'FIAT_EMI',
+                asset: assetUpper,
+                amount: numAmount,
+                txId: result.txId,
+                hash: result.entry.hash,
+                status: 'SETTLED',
+                clearingRail: result.entry.rail,
+                safeguarded: true,
+                message: `Accredito immediato di ${assetUpper === 'EUR' ? '€' : '$'}${numAmount.toLocaleString()} registrato sul ledger di moneta elettronica con riserva di salvaguardia EMD2 al 100%.`,
+                balances: result.balances,
+                entry: result.entry
+            });
+        }
+
+        // Path B: Real On-Chain Smart Contract Minting / Direct Transfer (BTC, ETH, USDT, BNB, USDC, EURC, BUSD, DAI, POL, ARB)
+        const recipientAddress = recipient || AppConfig.web3.walletAddress;
+        if (!blockchain.isValidAddress(recipientAddress)) {
+            return res.status(400).json({
+                success: false,
+                error: `Indirizzo wallet/contratto non valido per l'asset ${assetUpper}: ${recipientAddress}. Deve essere un indirizzo esadecimale EVM (0x...).`
+            });
+        }
+
+        // 1. Dispatch real cryptographic on-chain transaction signed via ethers.js
+        const onChainTx = await blockchain.mintOrCreditToken({
+            token: assetUpper,
+            chainId: chainId,
+            recipientAddress: recipientAddress,
+            amount: numAmount,
+            mode: mode,
+            customSender: AppConfig.web3.walletAddress
+        });
+
+        // 2. Record immutable block confirmation in Core Ledger
+        const ledgerRecord = coreLedger.creditDirectOnChain({
+            token: assetUpper,
+            chainId: chainId,
+            recipient: recipientAddress,
+            amount: numAmount,
+            onChainTx: onChainTx,
+            note: note || `DIRECT_SMART_CONTRACT_${mode}_${assetUpper}`
+        });
+
+        return res.json({
+            success: true,
+            rail: 'ON_CHAIN',
+            asset: assetUpper,
+            amount: numAmount,
+            mode: mode,
+            txId: ledgerRecord.txId,
+            txHash: onChainTx.txHash,
+            explorerUrl: onChainTx.explorerUrl,
+            blockNumber: onChainTx.blockNumber,
+            network: onChainTx.network,
+            chainId: onChainTx.chainId,
+            recipient: recipientAddress,
+            signature: onChainTx.signature,
+            gasUsed: onChainTx.gasUsed,
+            calldata: onChainTx.calldata,
+            status: 'CONFIRMED_ON_CHAIN',
+            ledgerHash: ledgerRecord.entry.hash,
+            message: `Emissione/Minting completato con successo: ${numAmount} ${assetUpper} su ${onChainTx.network}. Transazione firmata ed immutabile.`,
+            balances: ledgerRecord.balances,
+            entry: ledgerRecord.entry
+        });
+
+    } catch (err) {
+        console.error('[FUND_OR_MINT_ERROR]', err);
+        return res.status(500).json({
+            success: false,
+            error: err.message || 'Errore durante l\'esecuzione dell\'accredito o minting.'
+        });
+    }
+});
+
+module.exports = router;
+
